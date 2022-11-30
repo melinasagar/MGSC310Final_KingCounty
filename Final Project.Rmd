@@ -1,0 +1,148 @@
+---
+title: "Final Project: King County House Sales"
+author: "Audrey Jones and Melina Sagar"
+date: "2022-11-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Please leave this code chunk as is. It makes some slight formatting changes to alter the output to be more aesthetically pleasing. 
+
+library(knitr)
+
+# Change the number in set seed to your own favorite number
+set.seed(22)
+options(width=70)
+options(scipen=99)
+
+# this sets text outputted in code chunks to small
+opts_chunk$set(tidy.opts=list(width.wrap=50),tidy=TRUE, size = "vsmall")  
+opts_chunk$set(message = FALSE,                                          
+               warning = FALSE,
+               # "caching" stores objects in code chunks and only rewrites if you change things
+               cache = FALSE,                               
+               # automatically downloads dependency files
+               autodep = TRUE,
+               # 
+               cache.comments = FALSE,
+               # 
+               collapse = TRUE,
+               # change fig.width and fig.height to change the code height and width by default
+               fig.width = 5.5,  
+               fig.height = 4.5,
+               fig.align='center')
+```
+
+```{r setup-2}
+sessionInfo()
+getwd()
+```
+
+```{r setup-3}
+# libraries
+library('tidyverse')
+library("readr")
+library('rsample')
+library('ggplot2')
+library('dplyr')
+library('forcats')
+library('randomForest')
+library('randomForestExplainer')
+library('ggridges')
+library('PerformanceAnalytics')
+library('rpart')       
+library('rpart.plot')  
+library('partykit')
+library('reshape2')
+library('vtable')
+```
+
+```{r}
+# read in data
+houses <- read_csv("datasets/kc_house_data.csv")
+houses
+# summary variables
+houses_summary <- houses %>% select(price, bedrooms, bathrooms, sqft_living, floors, waterfront, view, condition, grade, zipcode) %>% mutate(view = as_factor(view), zipcode = as_factor(zipcode))
+
+# add zip code
+houses <- houses %>%  select(price, bedrooms, bathrooms, sqft_living, sqft_lot, floors, waterfront, view, condition, grade, yr_built, yr_renovated, zipcode)
+```
+# Summary Plots
+
+## Summary Statistics
+
+```{r}
+st(houses_summary)
+```
+
+## Price Distribution
+
+```{r}
+ggplot(houses, aes(x = price)) + geom_histogram(binwidth = 30000) + xlim(0,2500000) + theme_minimal() + labs(title = "Distribution of House Sale Prices in King County in 2014 & 2015")
+```
+
+## Variable Correlation Heat Map
+
+```{r}
+cormat <- round(cor(houses), 2)
+melt <- melt(cormat)
+
+ggplot(data = melt, aes(x = Var1, y = Var2, fill = value)) + geom_tile(color = "black") + geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) + scale_fill_gradient(low = "white", high = "red") + labs(x = "", y = "", title = "Correlation Between House Characteristics") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Zip Code Price Distribution
+
+```{r}
+ggplot(houses, aes(x = factor(zipcode), y = price)) + geom_boxplot() + theme_minimal() + labs(title = "Price Distribution Per Zipcode") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+# Models
+
+## Decision Tree
+
+```{r}
+# select variables
+houses<-houses%>%select(price, bedrooms, bathrooms, grade, sqft_living, floors, waterfront, view, zipcode)
+
+# create binary variable for price (1 if price is out of budget, or greater than $800,000)
+houses <- houses %>% mutate(price_binary = ifelse(price > 800000, 1, 0), waterfront = ifelse(waterfront == 1, 1, 0)) %>% mutate(price_binary = as_factor(price_binary), waterfront = as_factor(waterfront))
+
+# rpart cross validation
+houses_rpart <- rpart(price_binary ~ +waterfront +view +bedrooms +bathrooms +floors, data = houses, method = "class", control = list(cp = 0, minsplit = 200, maxdepth = 4))
+plotcp(houses_rpart)
+```
+
+```{r}
+# plot decision tree
+houses_tree <- ctree(price_binary ~ +waterfront +view +bedrooms +bathrooms +floors, data = houses, control = partykit::ctree_control(alpha = 0.01, minsplit = 200, maxdepth = 4, minbucket = 300))
+plot(houses_tree)
+```
+
+## Linear Regression
+
+```{r}
+# factors
+houses <- houses %>% mutate(view = as_factor(view))
+houses<-houses%>%mutate(zipcode=as_factor(zipcode))
+
+# split data
+houses_split <- initial_split(houses, prop = 0.75)  #8 
+houses_train <- training(houses_split)
+houses_test <- testing(houses_split)
+
+# model
+lr<-lm(price~. -price_binary, data = houses_train)
+summary(lr)
+
+# make predictions
+pred_train<-predict(lr)
+pred_test<-predict(lr, newdata = houses_test)
+
+# calculate mse
+get_rmse <- function(true, predictions){
+  sqrt(mean((true - predictions)^2))
+}
+get_rmse(houses_train$price, pred_train)
+get_rmse(houses_test$price, pred_test)
+```
+
